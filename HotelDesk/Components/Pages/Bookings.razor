@@ -48,7 +48,7 @@
                             disabled="@(_loading || _saving)"
                             @onclick="SearchRoomsDemoAsync">
 
-                        Tìm phòng trống (Demo)
+                        Tìm phòng trống (Demo Dirty Read)
                     </button>
 
                 </div>
@@ -62,7 +62,7 @@
         </p>
 
         <p class="muted">
-            Nút Demo sử dụng READ UNCOMMITTED để minh họa Dirty Read.
+            Nút Demo sử dụng READ UNCOMMITTED (thông qua SP sp_TraCuuPhongTrong_DirtyRead) để minh họa Dirty Read.
         </p>
     }
     @if (Key == "room-management")
@@ -157,8 +157,6 @@
         <details open="@(Key == "booking")">
             <summary>Đặt phòng mới</summary>
 
-           
-
             @if (!string.IsNullOrEmpty(_catalogError))
             {
                 <div class="notice error">@_catalogError</div>
@@ -177,8 +175,6 @@
                 <fieldset disabled="@_saving">
 
                     <div class="form-grid">
-
-                     
 
                         <label>
                             Tên khách hàng
@@ -241,93 +237,75 @@
                             Danh sách phòng
 
                             <div class="room-selector">
+                                <div class="room-list">
+                                    @foreach (var row in (Key == "rooms" ? _data : _rooms).Rows)
+                                    {
+                                        var roomId = row.GetValueOrDefault("MaPhong")?.ToString() ?? "";
+                                        var roomNumber = row.GetValueOrDefault("SoPhong")?.ToString();
+                                        var selected = IsRoomSelected(roomId);
 
-  
+                                        <button type="button"
+                                                class="room-option @(selected ? "selected" : "")"
+                                                aria-pressed="@selected"
+                                                @onclick="() => ToggleRoom(roomId)">
 
-    <div class="room-selector">
-  
+                                            <span class="room-check @(selected ? "checked" : "")">
+                                                @if (selected)
+                                                {
+                                                    <span>✓</span>
+                                                }
+                                            </span>
 
-    <div class="room-list">
-        @foreach (var row in (Key == "rooms" ? _data : _rooms).Rows)
-        {
-            var roomId =
-                row.GetValueOrDefault("MaPhong")?.ToString() ?? "";
+                                            <span class="room-info">
+                                                <strong>@roomId</strong>
+                                                <span>Phòng @roomNumber</span>
+                                            </span>
 
-            var roomNumber =
-                row.GetValueOrDefault("SoPhong")?.ToString();
-
-            var selected = IsRoomSelected(roomId);
-
-            <button type="button"
-                    class="room-option @(selected ? "selected" : "")"
-                    aria-pressed="@selected"
-                    @onclick="() => ToggleRoom(roomId)">
-
-                <span class="room-check @(selected ? "checked" : "")">
-                    @if (selected)
-                    {
-                        <span>✓</span>
-                    }
-                </span>
-
-                <span class="room-info">
-                    <strong>@roomId</strong>
-                    <span>Phòng @roomNumber</span>
-                </span>
-
-            </button>
-        }
-    </div>
-</div>
-
-    
-
-</div>
+                                        </button>
+                                    }
+                                </div>
+                            </div>
                         </label>
 
                     </div>
 
-                   <div class="form-footer">
+                    <div class="form-footer">
 
-    <!-- SP AN TOÀN -->
-    <button class="button"
-            type="submit">
+                        <!-- SP CHUẨN -->
+                        <button class="button"
+                                type="submit">
+                            @(_saving ? "Đang thực hiện…" : "Đặt phòng chuẩn")
+                        </button>
 
-        @(_saving
-            ? "Đang thực hiện…"
-            : "Đặt phòng")
+                        <!-- DEMO LOST UPDATE: BẢN LỖI -->
+                        <button class="button secondary"
+                                type="button"
+                                disabled="@_saving"
+                                @onclick="() => CreateUnsafeBookingAsync(false)">
+                            Đặt phòng lỗi (Lost Update)
+                        </button>
 
-    </button>
+                        <!-- DEMO LOST UPDATE: BẢN FIX BẢO VỆ -->
+                        <button class="button secondary"
+                                type="button"
+                                disabled="@_saving"
+                                @onclick="() => CreateUnsafeBookingAsync(true)">
+                            Đặt phòng bảo vệ (Fix Lost Update)
+                        </button>
 
+                        <!-- DEADLOCK -->
+                        <button class="button secondary"
+                                type="button"
+                                disabled="@_saving"
+                                @onclick="CreateDeadlockBookingAsync">
+                            Demo Deadlock
+                        </button>
 
-    <!-- RACE CONDITION -->
-    <button class="button secondary"
-            type="button"
-            disabled="@_saving"
-            @onclick="CreateUnsafeBookingAsync">
-
-        Đặt phòng lỗi
-
-    </button>
-
-
-    <!-- DEADLOCK -->
-    <button class="button secondary"
-            type="button"
-            disabled="@_saving"
-            @onclick="CreateDeadlockBookingAsync">
-
-        Demo Deadlock
-
-    </button>
-
-</div>
+                    </div>
 
                 </fieldset>
 
             </EditForm>
-
-           
 
         </details>
     </section>
@@ -386,6 +364,7 @@
     private int _loadVersion;
     private decimal? _due, _paid;
     private TableData Filtered => new(_data.Columns,_data.Rows.Where(row=>string.IsNullOrWhiteSpace(_search) || row.Values.Any(v=>TableData.Text(v).Contains(_search,StringComparison.OrdinalIgnoreCase))).ToArray());
+
     protected override async Task OnParametersSetAsync()
     {
         _search=""; _operation=new(); _due=null; _paid=null; _balanceHint="";
@@ -401,75 +380,51 @@
     }
 
     private async Task CreateDeadlockBookingAsync()
-{
-    if (_saving)
-        return;
-
-    if (_newBooking.RoomIds is null ||
-        _newBooking.RoomIds.Length < 2)
     {
-        _message =
-            "Demo deadlock cần chọn ít nhất 2 phòng.";
+        if (_saving) return;
 
-        _ok = false;
+        if (_newBooking.RoomIds is null || _newBooking.RoomIds.Length < 2)
+        {
+            _message = "Demo deadlock cần chọn ít nhất 2 phòng.";
+            _ok = false;
+            return;
+        }
 
-        return;
-    }
+        if (string.IsNullOrWhiteSpace(_newBooking.StaffId))
+        {
+            _message = "Vui lòng chọn nhân viên.";
+            _ok = false;
+            return;
+        }
 
-    if (string.IsNullOrWhiteSpace(_newBooking.StaffId))
-    {
-        _message =
-            "Vui lòng chọn nhân viên.";
+        _saving = true;
+        _message = "";
 
-        _ok = false;
-
-        return;
-    }
-
-    _saving = true;
-    _message = "";
-
-    try
-    {
-        var result =
-            await Hotel.CreateDeadlockAsync(
-                _newBooking);
-
-        var bookingId =
-            result.Rows
-                .FirstOrDefault()?
-                .GetValueOrDefault("MaDatPhong")?
-                .ToString();
-
-        await RefreshAsync();
-
-        _message =
-            bookingId is null
+        try
+        {
+            var result = await Hotel.CreateDeadlockAsync(_newBooking);
+            var bookingId = result.Rows.FirstOrDefault()?.GetValueOrDefault("MaDatPhong")?.ToString();
+            await RefreshAsync();
+            _message = bookingId is null
                 ? "Giao tác hoàn thành. Phiên này không bị chọn làm deadlock victim."
                 : $"Booking {bookingId} thành công. Phiên này không bị chọn làm deadlock victim.";
-
-        _ok = true;
+            _ok = true;
+        }
+        catch (Microsoft.Data.SqlClient.SqlException ex) when (ex.Number == 1205)
+        {
+            _message = "DEADLOCK 1205: giao tác này đã bị SQL Server chọn làm deadlock victim và rollback.";
+            _ok = false;
+        }
+        catch (Exception ex)
+        {
+            Fail(ex);
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
-    catch (Microsoft.Data.SqlClient.SqlException ex)
-        when (ex.Number == 1205)
-    {
-        _message =
-            "DEADLOCK 1205: giao tác này đã bị SQL Server chọn làm deadlock victim và rollback.";
-
-        _ok = false;
-    }
-
-    catch (Exception ex)
-    {
-        Fail(ex);
-    }
-
-    finally
-    {
-        _saving = false;
-    }
-}
     private void StartBookingFromRoom(Dictionary<string, object?> row)
     {
         if (row.GetValueOrDefault("MaPhong") is not string roomId) return;
@@ -479,94 +434,50 @@
     }
 
     private int GetRoomSelectionIndex(string roomId)
-{
-    if (_newBooking.RoomIds is null)
-        return -1;
-
-    return Array.FindIndex(
-        _newBooking.RoomIds,
-        r => string.Equals(
-            r,
-            roomId,
-            StringComparison.OrdinalIgnoreCase));
-}
-
-
-private bool IsRoomSelected(string roomId)
-{
-    return _newBooking.RoomIds?.Any(
-        r => string.Equals(
-            r,
-            roomId,
-            StringComparison.OrdinalIgnoreCase)) == true;
-}
-
-
-private void ToggleRoom(string roomId)
-{
-    if (string.IsNullOrWhiteSpace(roomId))
-        return;
-
-    var rooms =
-        _newBooking.RoomIds?.ToList()
-        ?? new List<string>();
-
-    var index = rooms.FindIndex(
-        r => string.Equals(
-            r,
-            roomId,
-            StringComparison.OrdinalIgnoreCase));
-
-    if (index >= 0)
     {
-        // Đã chọn -> bỏ chọn
-        rooms.RemoveAt(index);
-    }
-    else
-    {
-        // Chưa chọn -> thêm vào CUỐI danh sách
-        // => vẫn giữ thứ tự click để demo deadlock
-        rooms.Add(roomId);
+        if (_newBooking.RoomIds is null) return -1;
+        return Array.FindIndex(_newBooking.RoomIds, r => string.Equals(r, roomId, StringComparison.OrdinalIgnoreCase));
     }
 
-    _newBooking.RoomIds = rooms.ToArray();
-} 
+    private bool IsRoomSelected(string roomId)
+    {
+        return _newBooking.RoomIds?.Any(r => string.Equals(r, roomId, StringComparison.OrdinalIgnoreCase)) == true;
+    }
 
+    private void ToggleRoom(string roomId)
+    {
+        if (string.IsNullOrWhiteSpace(roomId)) return;
+        var rooms = _newBooking.RoomIds?.ToList() ?? new List<string>();
+        var index = rooms.FindIndex(r => string.Equals(r, roomId, StringComparison.OrdinalIgnoreCase));
+
+        if (index >= 0) rooms.RemoveAt(index);
+        else rooms.Add(roomId);
+
+        _newBooking.RoomIds = rooms.ToArray();
+    } 
 
     private async Task SearchRoomsDemoAsync()
     {
-        if (_loading || _saving)
-            return;
+        if (_loading || _saving) return;
 
         var version = ++_loadVersion;
-
         _loading = true;
         _message = "";
-
         ClearSelection();
 
         try
         {
-            var data = await Hotel.SearchRoomsDemoAsync(
-                _roomRange.From,
-                _roomRange.To);
-
-            // Tránh request cũ ghi đè request mới
-            if (version != _loadVersion)
-                return;
+            var data = await Hotel.SearchRoomsDemoAsync(_roomRange.From, _roomRange.To);
+            if (version != _loadVersion) return;
 
             _data = data;
             _requiresReload = false;
 
-            // Đồng bộ ngày với form đặt phòng
             _newBooking.ArrivalDate = _roomRange.From;
             _newBooking.DepartureDate = _roomRange.To;
             _newBooking.RoomIds = [];
 
-            _message =
-                "DEMO: Kết quả được đọc bằng READ UNCOMMITTED. " +
-                "Dữ liệu có thể bao gồm thay đổi chưa COMMIT.";
-
+            _message = "DEMO DIRTY READ: Kết quả được đọc qua sp_TraCuuPhongTrong_DirtyRead (READ UNCOMMITTED). Dữ liệu có thể chứa thay đổi chưa COMMIT.";
             _ok = true;
         }
         catch (Exception ex)
@@ -579,11 +490,11 @@ private void ToggleRoom(string roomId)
         }
         finally
         {
-            if (version == _loadVersion)
-                _loading = false;
+            if (version == _loadVersion) _loading = false;
         }
     }
-private async Task RefreshAsync()
+
+    private async Task RefreshAsync()
     {
         var version=++_loadVersion; var key=Key; _loading=true; _message="";
         ClearSelection();
@@ -605,12 +516,14 @@ private async Task RefreshAsync()
         catch (Exception ex) { if (version==_loadVersion) { _data=TableData.Empty; Fail(ex); } }
         finally { if (version==_loadVersion) _loading=false; }
     }
+
     private async Task LoadCatalogAsync()
     {
         _catalogError="";
         try { (_customers,_staff,_rooms,_roomTypes)=await Hotel.CatalogAsync(); _catalogLoaded=true; }
         catch(Exception ex) { Logger.LogWarning(ex, "Catalog load failed"); _catalogError=SqlFeedback.Explain(ex).Message; }
     }
+
     private async Task AddRoomTypeAsync()
     {
         if (_saving) return;
@@ -619,6 +532,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { Fail(ex); }
         finally { _saving = false; }
     }
+
     private async Task UpdateRoomPriceAsync()
     {
         if (_saving) return;
@@ -627,6 +541,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { Fail(ex); }
         finally { _saving = false; }
     }
+
     private void SelectBooking(Dictionary<string,object?> row)
     {
         if (_saving || _loading || _requiresReload) return;
@@ -639,28 +554,22 @@ private async Task RefreshAsync()
         _balanceHint=_due.HasValue ? $"Còn phải trả: {TableData.Text(_due)} đ · Đã thu ròng: {TableData.Text(_paid)} đ" : "Xem Booking & công nợ để lấy số tiền cần thu / hoàn.";
         _message=$"Đã chọn {id}, Version {_operation.Version}."; _ok=true;
     }
+
     private void ActionChanged()
     {
         _operation.PaymentId = null;
-
         _operation.Amount = _operation.Action switch
         {
-            BookingAction.CheckOut
-                or BookingAction.CheckOutDemo
-                    => _due ?? 0,
-
-            BookingAction.Cancel
-                => _paid ?? 0,
-
+            BookingAction.CheckOut or BookingAction.CheckOutDemo => _due ?? 0,
+            BookingAction.Cancel => _paid ?? 0,
             _ => 0
         };
-
         _operation.NoShowFee = 0;
-
-        if (_operation.Action == BookingAction.NoShow)
-            UpdateRefund();
+        if (_operation.Action == BookingAction.NoShow) UpdateRefund();
     }
+
     private void UpdateRefund() => _operation.Amount=(_paid ?? 0)-_operation.NoShowFee;
+
     private async Task SubmitOperationAsync()
     {
         if (_saving || _loading || !_hasSelection || _requiresReload) return;
@@ -689,6 +598,7 @@ private async Task RefreshAsync()
         }
         finally { _saving=false; }
     }
+
     private async Task CreateBookingAsync()
     {
         if (_saving) return;
@@ -706,39 +616,44 @@ private async Task RefreshAsync()
         finally { _saving=false; }
     }
 
-    private async Task CreateUnsafeBookingAsync()
-{
-    if (_saving) return;
-
-    _saving = true;
-    _message = "";
-
-    try
+    private async Task CreateUnsafeBookingAsync(bool isFixed = false)
     {
-        var result = await Hotel.CreateUnsafeAsync(_newBooking);
+        if (_saving) return;
 
-        var generatedBookingId = result.Rows
-            .FirstOrDefault()?
-            .GetValueOrDefault("MaDatPhong")?
-            .ToString();
-         await RefreshAsync();
-        _message = generatedBookingId is null
-            ? "Đặt phòng không bảo vệ thành công."
-            : $"Đặt phòng không bảo vệ thành công. Mã booking: {generatedBookingId}.";
+        _saving = true;
+        _message = "";
 
-        _ok = true;
+        try
+        {
+            var result = await Hotel.CreateUnsafeAsync(_newBooking, isFixed);
+            var generatedBookingId = result.Rows.FirstOrDefault()?.GetValueOrDefault("MaDatPhong")?.ToString();
+            
+            await RefreshAsync();
 
-       
+            if (isFixed)
+            {
+                _message = generatedBookingId is null
+                    ? "Đặt phòng BẢO VỆ thành công (Tránh được Lost Update)."
+                    : $"Đặt phòng BẢO VỆ thành công. Mã booking: {generatedBookingId}. (Đã dùng khóa UPDLOCK/HOLDLOCK chống Lost Update).";
+            }
+            else
+            {
+                _message = generatedBookingId is null
+                    ? "Đặt phòng KHÔNG BẢO VỆ thành công (Demo Lost Update)."
+                    : $"Đặt phòng KHÔNG BẢO VỆ thành công. Mã booking: {generatedBookingId}.";
+            }
+
+            _ok = true;
+        }
+        catch (Exception ex)
+        {
+            Fail(ex);
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
-    catch (Exception ex)
-    {
-        Fail(ex);
-    }
-    finally
-    {
-        _saving = false;
-    }
-}
     
     private bool _concurrencyFixed;
     private bool _concurrencyBusy;
@@ -762,6 +677,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { ConcurrencyFail(ex); }
         finally { _concurrencyBusy = false; }
     }
+
     private async Task RunNonRepeatSessionA()
     {
         if (_concurrencyBusy) return;
@@ -776,6 +692,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { ConcurrencyFail(ex); }
         finally { _concurrencyBusy = false; }
     }
+
     private async Task RunNonRepeatSessionB()
     {
         if (_concurrencyBusy) return;
@@ -789,6 +706,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { ConcurrencyFail(ex); }
         finally { _concurrencyBusy = false; }
     }
+
     private async Task RunPhantomSessionA()
     {
         if (_concurrencyBusy) return;
@@ -803,6 +721,7 @@ private async Task RefreshAsync()
         catch (Exception ex) { ConcurrencyFail(ex); }
         finally { _concurrencyBusy = false; }
     }
+
     private async Task RunPhantomSessionB()
     {
         if (_concurrencyBusy) return;
@@ -816,17 +735,18 @@ private async Task RefreshAsync()
         catch (Exception ex) { ConcurrencyFail(ex); }
         finally { _concurrencyBusy = false; }
     }
+
     private void ConcurrencyFail(Exception ex)
     {
         Logger.LogWarning(ex, "Concurrency demo failed");
         _concurrencyMessage = SqlFeedback.Explain(ex).Message;
         _concurrencyOk = false;
     }
+
     private void Fail(Exception ex) { Logger.LogWarning(ex, "Booking operation or view load failed"); _message=SqlFeedback.Explain(ex).Message; _ok=false; }
+
     private void ClearSelection()
     {
         _hasSelection=false; _canNoShow=false; _operation=new(); _balanceHint=""; _due=null; _paid=null;
     }
 }
-
-
