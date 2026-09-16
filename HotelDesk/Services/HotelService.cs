@@ -3,9 +3,11 @@ using HotelDesk.Models;
 using System.Data;
 using System.ComponentModel.DataAnnotations;
 using Microsoft.Data.SqlClient;
+
 namespace HotelDesk.Services;
 
 public sealed record ViewDefinition(string Key, string Title);
+
 public sealed class HotelService(HotelDb db)
 {
     public static IReadOnlyList<ViewDefinition> Views { get; } = [
@@ -16,7 +18,7 @@ public sealed class HotelService(HotelDb db)
         new("calendar","Lịch phòng"), new("transactions","Lịch sử giao dịch"),
         new("revenue","Giá trị booking theo loại")
     ];
-  
+
     public Task<TableData> ViewAsync(string key, CancellationToken ct = default, DateTime? from = null, DateTime? to = null)
     {
         if (key is "booking" or "room-management") return Task.FromResult(TableData.Empty);
@@ -28,7 +30,6 @@ public sealed class HotelService(HotelDb db)
             var range = new CalendarRange { From = from?.Date ?? DateTime.Today, To = to?.Date ?? DateTime.Today.AddDays(6) };
             Validator.ValidateObject(range, new ValidationContext(range), validateAllProperties: true);
 
-            // sử dụng vw_GiamSat_LichPhong
             const string calendarSql = """
                 SELECT TOP (500) * FROM dbo.vw_GiamSat_LichPhong
                 WHERE Ngay >= @FromDate AND Ngay <= @ToDate
@@ -40,7 +41,6 @@ public sealed class HotelService(HotelDb db)
             ], ct);
         }
 
-        //sử dụng các view khác như vw_QuyetToanBooking, vw_BookingChoNhanPhong, vw_KhachDangLuuTru, vw_LichSuGiaoDichBooking, vw_BaoCao_DoanhThu_LoaiPhong
         var sql = key switch
         {
             "bookings" => "SELECT TOP (500) * FROM dbo.vw_QuyetToanBooking ORDER BY MaDatPhong DESC;",
@@ -53,6 +53,7 @@ public sealed class HotelService(HotelDb db)
         };
         return db.QueryAsync(sql, cancellation: ct);
     }
+
     public async Task<(TableData Customers, TableData Staff, TableData Rooms, TableData RoomTypes)> CatalogAsync()
     {
         var customers = db.QueryAsync("SELECT MaKH, HoTen FROM dbo.KHACHHANG ORDER BY MaKH;");
@@ -63,7 +64,6 @@ public sealed class HotelService(HotelDb db)
         return (await customers, await staff, await rooms, await roomTypes);
     }
 
-    // sử dụng sp_ThemLoaiPhong và sp_CapNhatGiaLoaiPhong để thêm loại phòng mới và cập nhật giá cơ bản của loại phòng
     public Task<TableData> AddRoomTypeAsync(RoomTypeChange model)
     {
         Validator.ValidateObject(model, new ValidationContext(model), validateAllProperties: true);
@@ -74,6 +74,7 @@ public sealed class HotelService(HotelDb db)
             new SqlParameter("@BasePrice", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = model.BasePrice }
         ]);
     }
+
     public Task<TableData> UpdateRoomTypePriceAsync(string roomTypeId, decimal basePrice)
     {
         if (string.IsNullOrWhiteSpace(roomTypeId) || basePrice < 0 || decimal.Round(basePrice, 2) != basePrice)
@@ -84,9 +85,7 @@ public sealed class HotelService(HotelDb db)
             new SqlParameter("@BasePrice", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = basePrice }
         ]);
     }
-    
 
-    // sử dụng view tra cứu phòng
     public Task<TableData> SearchRoomsAsync(DateTime arrival, DateTime departure, CancellationToken ct = default)
     {
         if (arrival.Date < DateTime.Today || departure.Date <= arrival.Date || (departure.Date - arrival.Date).Days > 366)
@@ -108,27 +107,17 @@ public sealed class HotelService(HotelDb db)
         ], ct);
     }
 
-    // Refactor Dirty Read: Gọi SP sp_TraCuuPhongTrong_DirtyRead thay cho SQL thô
-    public Task<TableData> SearchRoomsDemoAsync(
-        DateTime arrival,
-        DateTime departure,
-        CancellationToken ct = default)
+    public Task<TableData> SearchRoomsDemoAsync(DateTime arrival, DateTime departure, CancellationToken ct = default)
     {
-        if (arrival.Date < DateTime.Today ||
-            departure.Date <= arrival.Date ||
-            (departure.Date - arrival.Date).Days > 366)
-        {
-            throw new ValidationException(
-                "Ngày nhận từ hôm nay; ngày trả sau ngày nhận, tối đa 366 đêm.");
-        }
+        if (arrival.Date < DateTime.Today || departure.Date <= arrival.Date || (departure.Date - arrival.Date).Days > 366)
+            throw new ValidationException("Ngày nhận từ hôm nay; ngày trả sau ngày nhận, tối đa 366 đêm.");
 
         return db.QueryAsync(
             "EXEC dbo.sp_TraCuuPhongTrong_DirtyRead @NgayNhan = @Arrival, @NgayTra = @Departure;",
             [
                 new SqlParameter("@Arrival", SqlDbType.Date) { Value = arrival.Date },
                 new SqlParameter("@Departure", SqlDbType.Date) { Value = departure.Date }
-            ],
-            ct);
+            ], ct);
     }
 
     public async Task<TableData> CreateAsync(NewBooking model)
@@ -172,22 +161,14 @@ public sealed class HotelService(HotelDb db)
         BookingValidation.Validate(model);
 
         if (model.RoomIds is null || model.RoomIds.Length < 2)
-        {
-            throw new ValidationException(
-                "Demo deadlock cần chọn ít nhất 2 phòng.");
-        }
+            throw new ValidationException("Demo deadlock cần chọn ít nhất 2 phòng.");
 
         if (string.IsNullOrWhiteSpace(model.CustomerId))
         {
-            var customer = await db.QueryAsync(
-                """
+            var customer = await db.QueryAsync("""
                 EXEC dbo.sp_TaoKhachHangTuThongTin
-                    @HoTen = @Name,
-                    @SDT = @Phone,
-                    @CCCD = @Identity,
-                    @Email = @Email;
-                """,
-                [
+                    @HoTen = @Name, @SDT = @Phone, @CCCD = @Identity, @Email = @Email;
+                """, [
                     new SqlParameter("@Name", SqlDbType.NVarChar, 200) { Value = model.CustomerName.Trim() },
                     new SqlParameter("@Phone", SqlDbType.VarChar, 15) { Value = model.CustomerPhone.Trim() },
                     new SqlParameter("@Identity", SqlDbType.VarChar, 20) { Value = model.CustomerIdentity.Trim() },
@@ -217,19 +198,16 @@ public sealed class HotelService(HotelDb db)
                 @DanhSachPhong = @Rooms;
             """;
 
-        return await db.QueryAsync(
-            sql,
-            [
-                new SqlParameter("@BookingId", SqlDbType.VarChar, 10) { Value = string.IsNullOrWhiteSpace(model.BookingId) ? DBNull.Value : model.BookingId },
-                new SqlParameter("@CustomerId", SqlDbType.VarChar, 10) { Value = model.CustomerId },
-                new SqlParameter("@StaffId", SqlDbType.VarChar, 10) { Value = model.StaffId },
-                new SqlParameter("@ArrivalDate", SqlDbType.Date) { Value = model.ArrivalDate.Date },
-                new SqlParameter("@DepartureDate", SqlDbType.Date) { Value = model.DepartureDate.Date },
-                new SqlParameter("@Rooms", SqlDbType.Structured) { TypeName = "dbo.DanhSachPhongDatCoThuTu", Value = rooms }
-            ]);
+        return await db.QueryAsync(sql, [
+            new SqlParameter("@BookingId", SqlDbType.VarChar, 10) { Value = string.IsNullOrWhiteSpace(model.BookingId) ? DBNull.Value : model.BookingId },
+            new SqlParameter("@CustomerId", SqlDbType.VarChar, 10) { Value = model.CustomerId },
+            new SqlParameter("@StaffId", SqlDbType.VarChar, 10) { Value = model.StaffId },
+            new SqlParameter("@ArrivalDate", SqlDbType.Date) { Value = model.ArrivalDate.Date },
+            new SqlParameter("@DepartureDate", SqlDbType.Date) { Value = model.DepartureDate.Date },
+            new SqlParameter("@Rooms", SqlDbType.Structured) { TypeName = "dbo.DanhSachPhongDatCoThuTu", Value = rooms }
+        ]);
     }
 
-    // Hỗ trợ chọn SP bản Lỗi (sp_DatPhong_KhongBaoVe) hoặc bản Fix (sp_DatPhong_BaoVe)
     public async Task<TableData> CreateUnsafeAsync(NewBooking model, bool isFixed = false)
     {
         BookingValidation.Validate(model);
@@ -282,6 +260,7 @@ public sealed class HotelService(HotelDb db)
             _ => throw new ValidationException("Nghiệp vụ không hợp lệ.")
         };
     }
+
     private Task<TableData> NoShowAsync(BookingOperation model)
     {
         const string sql = """
@@ -309,6 +288,7 @@ public sealed class HotelService(HotelDb db)
             new SqlParameter("@Version", SqlDbType.Int) { Value = model.Version }
         ]);
     }
+
     private Task<TableData> DatCocAsync(BookingOperation model)
     {
         const string sql = """
@@ -325,6 +305,7 @@ public sealed class HotelService(HotelDb db)
             new SqlParameter("@PaymentId", SqlDbType.VarChar, 10) { Value = (object?)model.PaymentId ?? DBNull.Value }
         ]);
     }
+
     private Task<TableData> TraPhongAsync(BookingOperation model)
     {
         const string sql = """
@@ -341,6 +322,7 @@ public sealed class HotelService(HotelDb db)
             new SqlParameter("@PaymentId", SqlDbType.VarChar, 10) { Value = (object?)model.PaymentId ?? DBNull.Value }
         ]);
     }
+
     private Task<TableData> TraPhongDemoAsync(BookingOperation model)
     {
         const string sql = """
@@ -393,7 +375,52 @@ public sealed class HotelService(HotelDb db)
 
     public Task<TableData> PhantomReadSessionBAsync(CancellationToken ct = default) =>
         db.QueryAsync("EXEC dbo.sp_Demo_PhantomRead_SessionB;", cancellation: ct);
-}
+
+    // ==========================================
+    // PHƯƠNG THỨC MỚI: DEMO DEADLOCK KB2
+    // ==========================================
+    public Task<TableData> ThanhToanKb2Async(string maGD, string bookingId, decimal amount, CancellationToken ct = default)
+    {
+        return db.QueryAsync(
+            "EXEC dbo.SP_ThanhToan @MaGD = @MaGD, @MaDatPhong = @BookingId, @SoTien = @Amount;",
+            [
+                new SqlParameter("@MaGD", SqlDbType.VarChar, 30) { Value = maGD },
+                new SqlParameter("@BookingId", SqlDbType.VarChar, 10) { Value = bookingId },
+                new SqlParameter("@Amount", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = amount }
+            ], ct);
+    }
+
+    public Task<TableData> BaoCaoKb2Async(bool isFixed, CancellationToken ct = default)
+    {
+        string spName = isFixed ? "dbo.SP_BaoCao" : "dbo.SP_BaoCao_Loi";
+        return db.QueryAsync($"EXEC {spName};", cancellation: ct);
+    }
+
+    public async Task<string> RunDeadlockKb2DemoAsync(string bookingId, bool isFixed)
+    {
+        string maGD = "GD_" + DateTime.Now.Ticks.ToString()[^8..];
+        decimal amount = 500000m;
+
+        var taskThanhToan = Task.Run(() => ThanhToanKb2Async(maGD, bookingId, amount));
+        var taskBaoCao = Task.Run(() => BaoCaoKb2Async(isFixed));
+
+        try
+        {
+            await Task.WhenAll(taskThanhToan, taskBaoCao);
+            return isFixed 
+                ? "Bản FIX thành công: Báo cáo dùng READ UNCOMMITTED nên không dính Deadlock!" 
+                : "Thực thi thành công không dính Deadlock (hãy thử lại lần nữa để tạo xung đột khóa).";
+        }
+        catch (SqlException ex) when (ex.Number == 1205)
+        {
+            return "DEADLOCK 1205 BẮT THÀNH CÔNG: SQL Server đã chọn hủy 1 tiến trình!";
+        }
+        catch (Exception ex)
+        {
+            return SqlFeedback.Explain(ex).Message;
+        }
+    }
+} // Kết thúc class HotelService
 
 public static class SqlFeedback
 {

@@ -340,6 +340,37 @@
         </details>
     </section>
 }
+<!-- KHU VỰC THÊM MỚI: DEMO DEADLOCK KB2 -->
+    <section class="panel">
+        <details>
+            <summary>Demo Deadlock KB2 (Thanh toán vs Báo cáo)</summary>
+            <p class="muted">
+                Xung đột giữa tiến trình Ghi (Lễ tân thanh toán cập nhật DATPHONG & THANHTOAN) 
+                và Tiến trình Đọc (Báo cáo tổng hợp khóa bảng THANHTOAN & DATPHONG).
+            </p>
+
+            <div class="form-grid">
+                <label>
+                    Mã booking chạy demo
+                    <input class="form-control" @bind="_kb2BookingId" placeholder="VD: DP00000001" />
+                </label>
+            </div>
+
+            <div class="form-footer mt-2">
+                <button class="button secondary" type="button" disabled="@_kb2Busy" @onclick="() => RunKb2DemoAsync(false)">
+                    Chạy Bản LỖI (Gây Deadlock KB2)
+                </button>
+                <button class="button" type="button" disabled="@_kb2Busy" @onclick="() => RunKb2DemoAsync(true)">
+                    Chạy Bản FIX (Dùng READ UNCOMMITTED)
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_kb2Message))
+            {
+                <p class="notice @(_kb2Ok ? "success" : "error") mt-2">@_kb2Message</p>
+            }
+        </details>
+    </section>
 @code {
     [Parameter] public string? ViewKey { get; set; }
     [SupplyParameterFromQuery(Name = "from")] public DateTime? BookingFrom { get; set; }
@@ -749,4 +780,36 @@
     {
         _hasSelection=false; _canNoShow=false; _operation=new(); _balanceHint=""; _due=null; _paid=null;
     }
+
+// Biến điều khiển Deadlock KB2
+    private string _kb2BookingId = "DP00000001";
+    private string _kb2Message = "";
+    private bool _kb2Busy = false;
+    private bool _kb2Ok = false;
+
+    private async Task RunKb2DemoAsync(bool isFixed)
+    {
+        if (_kb2Busy) return;
+        _kb2Busy = true;
+        _kb2Message = "Đang chạy 2 Session (Thanh toán & Báo cáo) đồng thời...";
+        StateHasChanged();
+
+        try
+        {
+            var result = await Hotel.RunDeadlockKb2DemoAsync(_kb2BookingId, isFixed);
+            _kb2Message = result;
+            _kb2Ok = !result.Contains("DEADLOCK") && !result.Contains("Lỗi");
+        }
+        catch (Exception ex)
+        {
+            _kb2Message = SqlFeedback.Explain(ex).Message;
+            _kb2Ok = false;
+        }
+        finally
+        {
+            _kb2Busy = false;
+            await RefreshAsync();
+        }
+    }
+
 }
