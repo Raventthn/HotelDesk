@@ -1,0 +1,63 @@
+@if (Data.Rows.Count == 0)
+{
+    <div class="empty-state">@EmptyText</div>
+}
+else
+{
+    <div class="table-scroll" tabindex="0" aria-label="Bảng dữ liệu, có thể cuộn ngang">
+        <table>
+            <thead><tr>
+                @if (OnSelect.HasDelegate) { <th scope="col">Thao tác</th> }
+                @foreach (var column in Data.Columns) { <th scope="col">@ColumnLabel(column)</th> }
+                @if (OnBook.HasDelegate) { <th scope="col">Đặt phòng</th> }
+            </tr></thead>
+            <tbody>
+                @foreach (var row in Data.Rows)
+                {
+                    <tr>
+                        @if (OnSelect.HasDelegate)
+                        {
+                            <td><button class="button small secondary" disabled="@(Disabled || !CanSelect(row))" @onclick="() => OnSelect.InvokeAsync(row)">Chọn</button></td>
+                        }
+                        @foreach (var column in Data.Columns)
+                        {
+                            var value = row.GetValueOrDefault(column);
+                            <td>
+                                @if (column.StartsWith("TrangThai") && value is not null)
+                                { <span class="status-tag">@TableData.Text(value)</span> }
+                                else { @TableData.Text(value) }
+                            </td>
+                        }
+                        @if (OnBook.HasDelegate)
+                        {
+                            <td><button class="button small" disabled="@(Disabled || !CanBook(row))" @onclick="() => OnBook.InvokeAsync(row)">Đặt phòng</button></td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+@code {
+    [Parameter] public TableData Data { get; set; } = TableData.Empty;
+    [Parameter] public string EmptyText { get; set; } = "Chưa có dữ liệu để hiển thị.";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<Dictionary<string,object?>> OnSelect { get; set; }
+    [Parameter] public EventCallback<Dictionary<string,object?>> OnBook { get; set; }
+    private static bool CanSelect(Dictionary<string,object?> row) => row.GetValueOrDefault("MaDatPhong") is not null && row.GetValueOrDefault("Version") is not null;
+    private static bool CanBook(Dictionary<string,object?> row) => row.GetValueOrDefault("MaPhong") is not null;
+    private static string ColumnLabel(string column) => column switch {
+        "Phien"=>"Phiên / booking demo", "SessionId"=>"SQL session", "DaDocPhongTrong"=>"Đã đọc phòng trống",
+        "SpBaoThanhCong"=>"SP báo thành công", "SoDemPhongYeuCau"=>"Đêm-phòng yêu cầu",
+        "SoDemPhongThucGiu"=>"Đêm-phòng thực giữ", "BiGhiDe"=>"Bị ghi đè",
+        "MaDatPhong"=>"Mã booking", "TenKhachHang"=>"Khách hàng", "TrangThaiBooking"=>"Trạng thái",
+        "Version"=>"Version", "TongPhaiTra"=>"Tổng phải trả", "DaThanhToanRong"=>"Đã thu ròng",
+        "ConPhaiTra"=>"Còn phải trả", "MaPhong"=>"Mã phòng", "SoPhong"=>"Số phòng", "Ngay"=>"Ngày",
+        "SoTien"=>"Số tiền", "LoaiGiaoDich"=>"Loại giao dịch", "TongDoanhThu"=>"Giá trị phân bổ",
+        "SoLuongPhong"=>"Số phòng", "MaKH"=>"Mã khách", "NgayNhanDuKien"=>"Ngày nhận dự kiến",
+        "NgayTraDuKien"=>"Ngày trả dự kiến", "PhiNoShow"=>"Phí no-show", "NgayXuLyNoShow"=>"Ngày xử lý no-show",
+        "CoTheNoShow"=>"Có thể xử lý no-show", "TenNhanVien"=>"Nhân viên", "GiaCoBan"=>"Giá mỗi đêm",
+        "TienPhongDuKien"=>"Tiền phòng dự kiến", "SoBookingUocTinh"=>"Booking ước tính", "NgayTraThucTe"=>"Ngày đóng/trả thực tế",
+        "LichHopLe"=>"Lịch hợp lệ", "SoLuongPhongDuKien"=>"Số phòng đã đặt", _=>column
+    };
+}

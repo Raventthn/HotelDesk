@@ -1,0 +1,832 @@
+@page "/"
+@page "/views/{ViewKey}"
+@inject HotelService Hotel
+@inject ILogger<Bookings> Logger
+@inject NavigationManager Navigation
+<PageTitle>@Title · Hotel Desk</PageTitle>
+<header class="page-header"><div><div class="eyebrow">KHÔNG GIAN LÀM VIỆC</div><h1>@Title</h1></div><button class="button secondary" disabled="@(_loading || _saving)" @onclick="RefreshAsync">Tải lại dữ liệu</button></header>
+@if (!string.IsNullOrEmpty(_message)) { <div class="notice @(_ok ? "success" : "error")" role="status">@_message</div> }
+@if (Key == "revenue")
+{ <p class="note">Giá trị booking mới dùng đơn giá đã lưu lúc đặt. Booking cũ chưa có chi tiết được đánh dấu ước tính. Tiền thực thu và hoàn tiền xem ở Lịch sử giao dịch.</p> }
+<div class="panel">
+    @if (Key == "rooms")
+    {
+        <EditForm Model="_roomRange"
+                  OnValidSubmit="RefreshAsync"
+                  FormName="room-search">
+
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+
+            <fieldset disabled="@(_loading || _saving)">
+
+                <div class="form-grid">
+                    <label>
+                        Ngày nhận
+                        <InputDate @bind-Value="_roomRange.From"
+                                   min="@DateTime.Today.ToString("yyyy-MM-dd")" />
+                    </label>
+
+                    <label>
+                        Ngày trả
+                        <InputDate @bind-Value="_roomRange.To"
+                                   min="@_roomRange.From.AddDays(1).ToString("yyyy-MM-dd")" />
+                    </label>
+                </div>
+
+                <div class="form-footer">
+
+                    <!-- TRA CỨU BÌNH THƯỜNG -->
+                    <button class="button secondary"
+                            type="submit">
+                        Tìm phòng trống
+                    </button>
+
+                    <!-- DIRTY READ DEMO -->
+                    <button class="button secondary"
+                            type="button"
+                            disabled="@(_loading || _saving)"
+                            @onclick="SearchRoomsDemoAsync">
+
+                        Tìm phòng trống (Demo)
+                    </button>
+
+                </div>
+
+            </fieldset>
+        </EditForm>
+
+        <p class="muted">
+            Chỉ hiển thị phòng trống đủ mọi đêm từ ngày nhận đến trước ngày trả.
+            Kết quả được kiểm tra lại khi đặt phòng.
+        </p>
+
+        <p class="muted">
+            Nút Demo sử dụng READ UNCOMMITTED để minh họa Dirty Read.
+        </p>
+    }
+    @if (Key == "room-management")
+    {
+        <details class="panel" open="@(Key == "room-management")">
+            <summary>Quản lý loại phòng và giá</summary>
+            <p class="muted">Giá mới chỉ áp dụng cho booking tạo sau khi cập nhật. Giá của booking cũ được lưu riêng.</p>
+            <EditForm Model="_newRoomType" OnValidSubmit="AddRoomTypeAsync" FormName="new-room-type">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="form-grid">
+                    <label>Mã loại phòng<InputText @bind-Value="_newRoomType.RoomTypeId" maxlength="10" /></label>
+                    <label>Tên loại phòng<InputText @bind-Value="_newRoomType.RoomTypeName" maxlength="50" /></label>
+                    <label>Giá cơ bản<InputNumber @bind-Value="_newRoomType.BasePrice" min="0" step="0.01" /></label>
+                </div>
+                <button class="button" type="submit" disabled="@_saving">Thêm loại phòng</button>
+            </EditForm>
+            <EditForm Model="_priceChange" OnValidSubmit="UpdateRoomPriceAsync" FormName="room-price-change">
+                <DataAnnotationsValidator /><ValidationSummary />
+                <div class="form-grid">
+                    <label>Loại phòng<InputSelect @bind-Value="_priceChange.RoomTypeId">
+                        <option value="">Chọn loại phòng</option>
+                        @foreach (var row in _roomTypes.Rows) { <option value="@(row.GetValueOrDefault("MaLoai"))">@row.GetValueOrDefault("MaLoai") · @row.GetValueOrDefault("TenLoai") · @TableData.Text(row.GetValueOrDefault("GiaCoBan")) đ</option> }
+                    </InputSelect></label>
+                    <label>Giá mới<InputNumber @bind-Value="_priceChange.BasePrice" min="0" step="0.01" /></label>
+                </div>
+                <button class="button secondary" type="submit" disabled="@_saving">Cập nhật giá</button>
+            </EditForm>
+        </details>
+    }
+    @if (Key == "calendar")
+    {
+        <EditForm Model="_calendarRange" OnValidSubmit="RefreshAsync" FormName="calendar-range">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <fieldset disabled="@(_loading || _saving)"><div class="form-grid">
+                <label>Từ ngày<InputDate @bind-Value="_calendarRange.From" /></label>
+                <label>Đến ngày<InputDate @bind-Value="_calendarRange.To" /></label>
+            </div><button class="button secondary" type="submit">Xem lịch phòng</button></fieldset>
+        </EditForm>
+        <p class="muted">Mặc định hiển thị 7 ngày từ hôm nay, theo thứ tự ngày tăng dần. Khoảng ngày bao gồm cả ngày bắt đầu và kết thúc.</p>
+        @if (_data.Rows.Count == 500)
+        { <p class="notice warning">Đã tải tối đa 500 dòng. Chọn khoảng ngày ngắn hơn để xem đầy đủ lịch phòng.</p> }
+    }
+    @if (Key != "booking" && Key != "room-management")
+    {
+        <div class="table-toolbar"><label>Tìm trong các dòng đã tải<input placeholder="Tìm trong các dòng đã tải" @bind="_search" @bind:event="oninput" /></label><span class="muted">@Filtered.Rows.Count / @_data.Rows.Count dòng · tối đa 500</span></div>
+        @if (_loading) { <div class="empty-state" role="status">Đang đọc dữ liệu từ SQL Server…</div> }
+        else if (CanOperate) { <DataGrid Data="Filtered" OnSelect="SelectBooking" Disabled="@(_saving || _requiresReload)" /> }
+        else if (Key == "rooms") { <DataGrid Data="Filtered" OnBook="StartBookingFromRoom" Disabled="@_saving" /> }
+        else { <DataGrid Data="Filtered" /> }
+    }
+</div>
+@if (CanOperate)
+{
+    <section class="panel">
+        <div class="section-heading"><div><div class="eyebrow">THAO TÁC BOOKING</div><h2>Nhận phòng, thu tiền &amp; trả phòng</h2></div></div>
+        <p class="muted">Chọn một dòng để lấy mã và Version đang hiển thị. Hai giá trị này không thể sửa. Khi dữ liệu đã thay đổi, bấm Tải lại dữ liệu rồi chọn lại booking và kiểm tra số tiền.</p>
+        <p class="muted">Muốn ở tiếp phải tạo booking mới cho các đêm bổ sung. Thanh toán và đóng booking cũ trước khi nhận booking mới; không tự cộng thêm đêm hoặc phí vào booking cũ.</p>
+        <EditForm Model="_operation" OnValidSubmit="SubmitOperationAsync" FormName="booking-operation">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <fieldset disabled="@(_saving || _loading || !_hasSelection || _requiresReload)"><div class="form-grid">
+                <label>Nghiệp vụ<InputSelect @bind-Value="_operation.Action" @bind-Value:after="ActionChanged">
+                    <option value="@BookingAction.CheckIn">Nhận phòng</option><option value="@BookingAction.Deposit">Đặt cọc</option>
+                    <option value="@BookingAction.CheckOut">Trả phòng &amp; thanh toán</option><option value="@BookingAction.Cancel">Hủy booking &amp; hoàn tiền</option>
+                    <option value="@BookingAction.CheckOutDemo">Trả phòng &amp; thanh toán (demo)</option>
+                    @if (_canNoShow) { <option value="@BookingAction.NoShow">Khách không đến (no-show)</option> }
+                </InputSelect></label>
+                <label>Mã booking<input value="@_operation.BookingId" readonly /></label>
+                <label>Version<input value="@(_hasSelection ? _operation.Version.ToString() : "")" readonly /></label>
+                @if (_operation.Action != BookingAction.CheckIn)
+                {
+                    @if (_operation.Action == BookingAction.NoShow)
+                    {
+                        <label>Phí no-show (VNĐ)<InputNumber @bind-Value="_operation.NoShowFee" @bind-Value:after="UpdateRefund" min="0" max="@_paid" step="0.01" /></label>
+                        <label>Tiền hoàn (VNĐ)<InputNumber @bind-Value="_operation.Amount" readonly /></label>
+                    }
+                    else
+                    {
+                        <label>@(_operation.Action == BookingAction.Cancel ? "Tiền hoàn (VNĐ)" : "Số tiền (VNĐ)")<InputNumber @bind-Value="_operation.Amount" min="0" step="0.01" /></label>
+                    }
+                    @if (_operation.Amount > 0)
+                    {
+                        <p class="muted transaction-note">Mã giao dịch sẽ được hệ thống tự sinh theo mã booking và nghiệp vụ.</p>
+                    }
+                }
+            </div><div class="form-footer"><button class="button" type="submit">@(_saving ? "Đang thực hiện…" : "Xác nhận nghiệp vụ")</button><span class="muted">@_balanceHint</span></div></fieldset>
+        </EditForm>
+    </section>
+}
+@if (Key == "booking")
+{
+    <section class="panel">
+        <details open="@(Key == "booking")">
+            <summary>Đặt phòng mới</summary>
+
+           
+
+            @if (!string.IsNullOrEmpty(_catalogError))
+            {
+                <div class="notice error">@_catalogError</div>
+
+                <button class="button secondary"
+                        @onclick="LoadCatalogAsync">
+                    Tải lại danh mục
+                </button>
+            }
+
+            <EditForm Model="_newBooking"
+                      OnValidSubmit="CreateBookingAsync"
+                      FormName="new-booking"><DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <fieldset disabled="@_saving">
+
+                    <div class="form-grid">
+
+                     
+
+                        <label>
+                            Tên khách hàng
+                            <InputText @bind-Value="_newBooking.CustomerName"
+                                       maxlength="200" />
+                        </label>
+
+                        <label>
+                            Số điện thoại
+                            <InputText @bind-Value="_newBooking.CustomerPhone"
+                                       maxlength="15" />
+                        </label>
+
+                        <label>
+                            CCCD
+                            <InputText @bind-Value="_newBooking.CustomerIdentity"
+                                       maxlength="20" />
+                        </label>
+
+                        <label>
+                            Email (không bắt buộc)
+                            <InputText @bind-Value="_newBooking.CustomerEmail"
+                                       maxlength="100" />
+                        </label>
+
+                        <label>
+                            Nhân viên
+
+                            <InputSelect @bind-Value="_newBooking.StaffId">
+                                <option value="">Chọn nhân viên</option>
+
+                                @foreach (var row in _staff.Rows)
+                                {
+                                    <option value="@(row.GetValueOrDefault("MaNV"))">
+                                        @row.GetValueOrDefault("MaNV")
+                                        ·
+                                        @row.GetValueOrDefault("HoTen")
+                                    </option>
+                                }
+                            </InputSelect>
+                        </label>
+
+                        <label>
+                            Ngày nhận
+
+                            <InputDate @bind-Value="_newBooking.ArrivalDate"
+                                       min="@DateTime.Today.ToString("yyyy-MM-dd")" />
+
+                            <ValidationMessage For="@(() => _newBooking.ArrivalDate)" />
+                        </label>
+
+                        <label>
+                            Ngày trả
+
+                            <InputDate @bind-Value="_newBooking.DepartureDate"
+                                       min="@_newBooking.ArrivalDate.AddDays(1).ToString("yyyy-MM-dd")" />
+                        </label>
+
+                        <label>
+                            Danh sách phòng
+
+                            <div class="room-selector">
+
+  
+
+    <div class="room-selector">
+  
+
+    <div class="room-list">
+        @foreach (var row in (Key == "rooms" ? _data : _rooms).Rows)
+        {
+            var roomId =
+                row.GetValueOrDefault("MaPhong")?.ToString() ?? "";
+
+            var roomNumber =
+                row.GetValueOrDefault("SoPhong")?.ToString();
+
+            var selected = IsRoomSelected(roomId);
+
+            <button type="button"
+                    class="room-option @(selected ? "selected" : "")"
+                    aria-pressed="@selected"
+                    @onclick="() => ToggleRoom(roomId)">
+
+                <span class="room-check @(selected ? "checked" : "")">
+                    @if (selected)
+                    {
+                        <span>✓</span>
+                    }
+                </span>
+
+                <span class="room-info">
+                    <strong>@roomId</strong>
+                    <span>Phòng @roomNumber</span>
+                </span>
+
+            </button>
+        }
+    </div>
+</div>
+
+    
+
+</div>
+                        </label>
+
+                    </div>
+
+                   <div class="form-footer">
+
+    <!-- SP AN TOÀN -->
+    <button class="button"
+            type="submit">
+
+        @(_saving
+            ? "Đang thực hiện…"
+            : "Đặt phòng")
+
+    </button>
+
+
+    <!-- RACE CONDITION -->
+    <button class="button secondary"
+            type="button"
+            disabled="@_saving"
+            @onclick="CreateUnsafeBookingAsync">
+
+        Đặt phòng lỗi
+
+    </button>
+
+
+    <!-- DEADLOCK -->
+    <button class="button secondary"
+            type="button"
+            disabled="@_saving"
+            @onclick="CreateDeadlockBookingAsync">
+
+        Demo Deadlock
+
+    </button>
+
+</div>
+
+                </fieldset>
+
+            </EditForm>
+
+           
+
+        </details>
+    </section>
+    <section class="panel">
+        <details>
+            <summary>Demo Non-Repeatable Read &amp; Phantom Read</summary>
+            <p class="muted">Mở 2 tab trình duyệt để mô phỏng 2 phiên chạy đồng thời. Bấm Session A ở một tab rồi lập tức sang tab kia bấm Session B trong lúc Session A đang chờ (khoảng 10 giây) để thấy giá trị/danh sách đọc lần 2 khác lần 1.</p>
+            <label class="concurrency-toggle">
+                <input type="checkbox" @bind="_concurrencyFixed" disabled="@_concurrencyBusy" />
+                Dùng mức cách ly đã sửa (REPEATABLE READ / SERIALIZABLE) cho Session A
+            </label>
+            <div class="form-footer">
+                <button class="button secondary" type="button" disabled="@_concurrencyBusy" @onclick="ResetConcurrencyDemoAsync">Reset dữ liệu demo</button>
+            </div>
+
+            <h4>Non-Repeatable Read (đọc lại giá trị của DP_DEMO_NRR)</h4>
+            <div class="form-footer">
+                <button class="button" type="button" disabled="@_concurrencyBusy" @onclick="RunNonRepeatSessionA">Session A · Đọc trạng thái 2 lần</button>
+                <button class="button secondary" type="button" disabled="@_concurrencyBusy" @onclick="RunNonRepeatSessionB">Session B · Check-in DP_DEMO_NRR</button>
+            </div>
+            <DataGrid Data="_nonRepeatResult" EmptyText="Chưa chạy Session A." />
+
+            <h4>Phantom Read (quét lại danh sách booking N'Đã đặt')</h4>
+            <div class="form-footer">
+                <button class="button" type="button" disabled="@_concurrencyBusy" @onclick="RunPhantomSessionA">Session A · Quét danh sách 2 lần</button>
+                <button class="button secondary" type="button" disabled="@_concurrencyBusy" @onclick="RunPhantomSessionB">Session B · Thêm booking DP_DEMO_PHANTOM</button>
+            </div>
+            <DataGrid Data="_phantomResult" EmptyText="Chưa chạy Session A." />
+
+            @if (!string.IsNullOrEmpty(_concurrencyMessage))
+            { <p class="notice @(_concurrencyOk ? "success" : "error")">@_concurrencyMessage</p> }
+        </details>
+    </section>
+}
+@code {
+    [Parameter] public string? ViewKey { get; set; }
+    [SupplyParameterFromQuery(Name = "from")] public DateTime? BookingFrom { get; set; }
+    [SupplyParameterFromQuery(Name = "to")] public DateTime? BookingTo { get; set; }
+    [SupplyParameterFromQuery(Name = "room")] public string? BookingRoom { get; set; }
+    private string Key => string.IsNullOrWhiteSpace(ViewKey) || ViewKey == "status" ? "bookings" : ViewKey;
+    private bool CanOperate => Key is "bookings" or "status";
+    private string Title => HotelService.Views.FirstOrDefault(v=>v.Key==Key)?.Title ?? "Không tìm thấy view";
+    private TableData _data = TableData.Empty, _customers = TableData.Empty, _staff = TableData.Empty, _rooms = TableData.Empty;
+    private TableData _roomTypes = TableData.Empty;
+    private BookingOperation _operation = new();
+    private NewBooking _newBooking = new();
+    private RoomTypeChange _newRoomType = new();
+    private RoomTypePriceChange _priceChange = new();
+    private CalendarRange _calendarRange = new();
+    private CalendarRange _roomRange = new() { To = DateTime.Today.AddDays(1) };
+    private bool _canNoShow;
+    private bool _raceRunning;
+    private string _search = "", _message = "", _balanceHint = "", _catalogError = "";
+    private bool _loading, _saving, _ok, _catalogLoaded;
+    private bool _hasSelection, _requiresReload;
+    private int _loadVersion;
+    private decimal? _due, _paid;
+    private TableData Filtered => new(_data.Columns,_data.Rows.Where(row=>string.IsNullOrWhiteSpace(_search) || row.Values.Any(v=>TableData.Text(v).Contains(_search,StringComparison.OrdinalIgnoreCase))).ToArray());
+    protected override async Task OnParametersSetAsync()
+    {
+        _search=""; _operation=new(); _due=null; _paid=null; _balanceHint="";
+        if (Key == "booking" && BookingFrom.HasValue && BookingTo.HasValue)
+        {
+            _newBooking.ArrivalDate = BookingFrom.Value.Date;
+            _newBooking.DepartureDate = BookingTo.Value.Date;
+            if (!string.IsNullOrWhiteSpace(BookingRoom))
+                _newBooking.RoomIds = [BookingRoom];
+        }
+        await RefreshAsync();
+        if (!_catalogLoaded) await LoadCatalogAsync();
+    }
+
+    private async Task CreateDeadlockBookingAsync()
+{
+    if (_saving)
+        return;
+
+    if (_newBooking.RoomIds is null ||
+        _newBooking.RoomIds.Length < 2)
+    {
+        _message =
+            "Demo deadlock cần chọn ít nhất 2 phòng.";
+
+        _ok = false;
+
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(_newBooking.StaffId))
+    {
+        _message =
+            "Vui lòng chọn nhân viên.";
+
+        _ok = false;
+
+        return;
+    }
+
+    _saving = true;
+    _message = "";
+
+    try
+    {
+        var result =
+            await Hotel.CreateDeadlockAsync(
+                _newBooking);
+
+        var bookingId =
+            result.Rows
+                .FirstOrDefault()?
+                .GetValueOrDefault("MaDatPhong")?
+                .ToString();
+
+        await RefreshAsync();
+
+        _message =
+            bookingId is null
+                ? "Giao tác hoàn thành. Phiên này không bị chọn làm deadlock victim."
+                : $"Booking {bookingId} thành công. Phiên này không bị chọn làm deadlock victim.";
+
+        _ok = true;
+    }
+
+    catch (Microsoft.Data.SqlClient.SqlException ex)
+        when (ex.Number == 1205)
+    {
+        _message =
+            "DEADLOCK 1205: giao tác này đã bị SQL Server chọn làm deadlock victim và rollback.";
+
+        _ok = false;
+    }
+
+    catch (Exception ex)
+    {
+        Fail(ex);
+    }
+
+    finally
+    {
+        _saving = false;
+    }
+}
+    private void StartBookingFromRoom(Dictionary<string, object?> row)
+    {
+        if (row.GetValueOrDefault("MaPhong") is not string roomId) return;
+        var from = _roomRange.From.ToString("yyyy-MM-dd");
+        var to = _roomRange.To.ToString("yyyy-MM-dd");
+        Navigation.NavigateTo($"/views/booking?from={from}&to={to}&room={Uri.EscapeDataString(roomId)}");
+    }
+
+    private int GetRoomSelectionIndex(string roomId)
+{
+    if (_newBooking.RoomIds is null)
+        return -1;
+
+    return Array.FindIndex(
+        _newBooking.RoomIds,
+        r => string.Equals(
+            r,
+            roomId,
+            StringComparison.OrdinalIgnoreCase));
+}
+
+
+private bool IsRoomSelected(string roomId)
+{
+    return _newBooking.RoomIds?.Any(
+        r => string.Equals(
+            r,
+            roomId,
+            StringComparison.OrdinalIgnoreCase)) == true;
+}
+
+
+private void ToggleRoom(string roomId)
+{
+    if (string.IsNullOrWhiteSpace(roomId))
+        return;
+
+    var rooms =
+        _newBooking.RoomIds?.ToList()
+        ?? new List<string>();
+
+    var index = rooms.FindIndex(
+        r => string.Equals(
+            r,
+            roomId,
+            StringComparison.OrdinalIgnoreCase));
+
+    if (index >= 0)
+    {
+        // Đã chọn -> bỏ chọn
+        rooms.RemoveAt(index);
+    }
+    else
+    {
+        // Chưa chọn -> thêm vào CUỐI danh sách
+        // => vẫn giữ thứ tự click để demo deadlock
+        rooms.Add(roomId);
+    }
+
+    _newBooking.RoomIds = rooms.ToArray();
+} 
+
+
+    private async Task SearchRoomsDemoAsync()
+    {
+        if (_loading || _saving)
+            return;
+
+        var version = ++_loadVersion;
+
+        _loading = true;
+        _message = "";
+
+        ClearSelection();
+
+        try
+        {
+            var data = await Hotel.SearchRoomsDemoAsync(
+                _roomRange.From,
+                _roomRange.To);
+
+            // Tránh request cũ ghi đè request mới
+            if (version != _loadVersion)
+                return;
+
+            _data = data;
+            _requiresReload = false;
+
+            // Đồng bộ ngày với form đặt phòng
+            _newBooking.ArrivalDate = _roomRange.From;
+            _newBooking.DepartureDate = _roomRange.To;
+            _newBooking.RoomIds = [];
+
+            _message =
+                "DEMO: Kết quả được đọc bằng READ UNCOMMITTED. " +
+                "Dữ liệu có thể bao gồm thay đổi chưa COMMIT.";
+
+            _ok = true;
+        }
+        catch (Exception ex)
+        {
+            if (version == _loadVersion)
+            {
+                _data = TableData.Empty;
+                Fail(ex);
+            }
+        }
+        finally
+        {
+            if (version == _loadVersion)
+                _loading = false;
+        }
+    }
+private async Task RefreshAsync()
+    {
+        var version=++_loadVersion; var key=Key; _loading=true; _message="";
+        ClearSelection();
+        try
+        {
+            var range = key == "rooms" ? _roomRange : _calendarRange;
+            var data=await Hotel.ViewAsync(key, from: range.From, to: range.To);
+            if (version==_loadVersion)
+            {
+                _data=data; _requiresReload=false;
+                if (key == "rooms")
+                {
+                    _newBooking.ArrivalDate=range.From;
+                    _newBooking.DepartureDate=range.To;
+                    _newBooking.RoomIds=[];
+                }
+            }
+        }
+        catch (Exception ex) { if (version==_loadVersion) { _data=TableData.Empty; Fail(ex); } }
+        finally { if (version==_loadVersion) _loading=false; }
+    }
+    private async Task LoadCatalogAsync()
+    {
+        _catalogError="";
+        try { (_customers,_staff,_rooms,_roomTypes)=await Hotel.CatalogAsync(); _catalogLoaded=true; }
+        catch(Exception ex) { Logger.LogWarning(ex, "Catalog load failed"); _catalogError=SqlFeedback.Explain(ex).Message; }
+    }
+    private async Task AddRoomTypeAsync()
+    {
+        if (_saving) return;
+        _saving = true;
+        try { await Hotel.AddRoomTypeAsync(_newRoomType); _newRoomType = new(); await LoadCatalogAsync(); _message = "Đã thêm loại phòng."; _ok = true; }
+        catch (Exception ex) { Fail(ex); }
+        finally { _saving = false; }
+    }
+    private async Task UpdateRoomPriceAsync()
+    {
+        if (_saving) return;
+        _saving = true;
+        try { await Hotel.UpdateRoomTypePriceAsync(_priceChange.RoomTypeId, _priceChange.BasePrice); await LoadCatalogAsync(); _message = "Đã cập nhật giá loại phòng."; _ok = true; }
+        catch (Exception ex) { Fail(ex); }
+        finally { _saving = false; }
+    }
+    private void SelectBooking(Dictionary<string,object?> row)
+    {
+        if (_saving || _loading || _requiresReload) return;
+        if (row.GetValueOrDefault("MaDatPhong") is not string id || row.GetValueOrDefault("Version") is null) return;
+        _operation=new() { BookingId=id, Version=Convert.ToInt32(row["Version"]) };
+        _hasSelection=true;
+        _canNoShow=Key == "bookings" && row.GetValueOrDefault("CoTheNoShow") is true;
+        _due=row.GetValueOrDefault("ConPhaiTra") is decimal due ? due : null;
+        _paid=row.GetValueOrDefault("DaThanhToanRong") is decimal paid ? paid : null;
+        _balanceHint=_due.HasValue ? $"Còn phải trả: {TableData.Text(_due)} đ · Đã thu ròng: {TableData.Text(_paid)} đ" : "Xem Booking & công nợ để lấy số tiền cần thu / hoàn.";
+        _message=$"Đã chọn {id}, Version {_operation.Version}."; _ok=true;
+    }
+    private void ActionChanged()
+    {
+        _operation.PaymentId = null;
+
+        _operation.Amount = _operation.Action switch
+        {
+            BookingAction.CheckOut
+                or BookingAction.CheckOutDemo
+                    => _due ?? 0,
+
+            BookingAction.Cancel
+                => _paid ?? 0,
+
+            _ => 0
+        };
+
+        _operation.NoShowFee = 0;
+
+        if (_operation.Action == BookingAction.NoShow)
+            UpdateRefund();
+    }
+    private void UpdateRefund() => _operation.Amount=(_paid ?? 0)-_operation.NoShowFee;
+    private async Task SubmitOperationAsync()
+    {
+        if (_saving || _loading || !_hasSelection || _requiresReload) return;
+        _saving=true;
+        try
+        {
+            if (_operation.Action == BookingAction.NoShow && (!_canNoShow || !_paid.HasValue || _operation.NoShowFee > _paid.Value))
+                throw new System.ComponentModel.DataAnnotations.ValidationException("Booking chưa đủ điều kiện no-show hoặc phí vượt tiền đã thu.");
+            var result = await Hotel.OperateAsync(_operation);
+            var generatedTransactionId = result.Rows.FirstOrDefault() is { } row
+                ? (row.GetValueOrDefault("MaGD") ?? row.GetValueOrDefault("MaGiaoDichMoi"))?.ToString()
+                : null;
+            ClearSelection();
+            await RefreshAsync();
+            var successMessage = generatedTransactionId is null
+                ? "Nghiệp vụ thành công. Chọn lại booking nếu cần thao tác tiếp."
+                : $"Nghiệp vụ thành công. Mã giao dịch: {generatedTransactionId}.";
+            _message=string.IsNullOrEmpty(_message) ? successMessage : "Nghiệp vụ đã thành công, nhưng tải lại dữ liệu gặp lỗi: "+_message;
+            _ok=true;
+        }
+        catch(Exception ex)
+        {
+            Fail(ex);
+            if (SqlFeedback.Explain(ex).Code is 50006 or 50109 or 50308 or 50211 or 51505 or 51511 or -2)
+                _requiresReload=true;
+        }
+        finally { _saving=false; }
+    }
+    private async Task CreateBookingAsync()
+    {
+        if (_saving) return;
+        _saving=true;
+        try
+        {
+            var result = await Hotel.CreateAsync(_newBooking);
+            var generatedBookingId = result.Rows.FirstOrDefault()?.GetValueOrDefault("MaDatPhong")?.ToString();
+            _newBooking=new(); await RefreshAsync();
+            var successMessage = generatedBookingId is null ? "Đặt phòng thành công." : $"Đặt phòng thành công. Mã booking: {generatedBookingId}.";
+            _message=string.IsNullOrEmpty(_message) ? successMessage : "Đã đặt phòng, nhưng tải lại dữ liệu gặp lỗi: "+_message;
+            _ok=true;
+        }
+        catch(Exception ex) { Fail(ex); }
+        finally { _saving=false; }
+    }
+
+    private async Task CreateUnsafeBookingAsync()
+{
+    if (_saving) return;
+
+    _saving = true;
+    _message = "";
+
+    try
+    {
+        var result = await Hotel.CreateUnsafeAsync(_newBooking);
+
+        var generatedBookingId = result.Rows
+            .FirstOrDefault()?
+            .GetValueOrDefault("MaDatPhong")?
+            .ToString();
+         await RefreshAsync();
+        _message = generatedBookingId is null
+            ? "Đặt phòng không bảo vệ thành công."
+            : $"Đặt phòng không bảo vệ thành công. Mã booking: {generatedBookingId}.";
+
+        _ok = true;
+
+       
+    }
+    catch (Exception ex)
+    {
+        Fail(ex);
+    }
+    finally
+    {
+        _saving = false;
+    }
+}
+    
+    private bool _concurrencyFixed;
+    private bool _concurrencyBusy;
+    private bool _concurrencyOk;
+    private string _concurrencyMessage = "";
+    private TableData _nonRepeatResult = TableData.Empty;
+    private TableData _phantomResult = TableData.Empty;
+
+    private async Task ResetConcurrencyDemoAsync()
+    {
+        if (_concurrencyBusy) return;
+        _concurrencyBusy = true;
+        try
+        {
+            await Hotel.ResetConcurrencyDemoAsync();
+            _nonRepeatResult = TableData.Empty;
+            _phantomResult = TableData.Empty;
+            _concurrencyMessage = "Đã reset dữ liệu demo Non-Repeatable Read / Phantom Read.";
+            _concurrencyOk = true;
+        }
+        catch (Exception ex) { ConcurrencyFail(ex); }
+        finally { _concurrencyBusy = false; }
+    }
+    private async Task RunNonRepeatSessionA()
+    {
+        if (_concurrencyBusy) return;
+        _concurrencyBusy = true;
+        _concurrencyOk = true;
+        _concurrencyMessage = "Session A đang đọc lần 1, sẽ chờ khoảng 10 giây rồi đọc lần 2…";
+        try
+        {
+            _nonRepeatResult = await Hotel.NonRepeatReadSessionAAsync(_concurrencyFixed);
+            _concurrencyMessage = "Session A đã hoàn tất 2 lần đọc. So sánh TrangThai giữa Lần đọc 1 và Lần đọc 2.";
+        }
+        catch (Exception ex) { ConcurrencyFail(ex); }
+        finally { _concurrencyBusy = false; }
+    }
+    private async Task RunNonRepeatSessionB()
+    {
+        if (_concurrencyBusy) return;
+        _concurrencyBusy = true;
+        try
+        {
+            await Hotel.NonRepeatReadSessionBAsync();
+            _concurrencyMessage = "Session B đã check-in (đổi trạng thái) DP_DEMO_NRR.";
+            _concurrencyOk = true;
+        }
+        catch (Exception ex) { ConcurrencyFail(ex); }
+        finally { _concurrencyBusy = false; }
+    }
+    private async Task RunPhantomSessionA()
+    {
+        if (_concurrencyBusy) return;
+        _concurrencyBusy = true;
+        _concurrencyOk = true;
+        _concurrencyMessage = "Session A đang quét lần 1, sẽ chờ khoảng 10 giây rồi quét lần 2…";
+        try
+        {
+            _phantomResult = await Hotel.PhantomReadSessionAAsync(_concurrencyFixed);
+            _concurrencyMessage = "Session A đã hoàn tất 2 lần quét. So sánh số dòng giữa Lần quét 1 và Lần quét 2.";
+        }
+        catch (Exception ex) { ConcurrencyFail(ex); }
+        finally { _concurrencyBusy = false; }
+    }
+    private async Task RunPhantomSessionB()
+    {
+        if (_concurrencyBusy) return;
+        _concurrencyBusy = true;
+        try
+        {
+            await Hotel.PhantomReadSessionBAsync();
+            _concurrencyMessage = "Session B đã thêm booking DP_DEMO_PHANTOM.";
+            _concurrencyOk = true;
+        }
+        catch (Exception ex) { ConcurrencyFail(ex); }
+        finally { _concurrencyBusy = false; }
+    }
+    private void ConcurrencyFail(Exception ex)
+    {
+        Logger.LogWarning(ex, "Concurrency demo failed");
+        _concurrencyMessage = SqlFeedback.Explain(ex).Message;
+        _concurrencyOk = false;
+    }
+    private void Fail(Exception ex) { Logger.LogWarning(ex, "Booking operation or view load failed"); _message=SqlFeedback.Explain(ex).Message; _ok=false; }
+    private void ClearSelection()
+    {
+        _hasSelection=false; _canNoShow=false; _operation=new(); _balanceHint=""; _due=null; _paid=null;
+    }
+}
+
+

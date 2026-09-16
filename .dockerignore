@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.git/
+.vs/
+.vscode/
+node_modules/
+outputs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+README.md
+verify.ps1
+db_inventory_builder.mjs

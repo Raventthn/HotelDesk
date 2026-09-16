@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+<div class="app-shell">
+    <aside class="sidebar">
+        <a class="brand" href="/"><span class="monogram">H</span><span>HOTEL DESK<small>Quản lý khách sạn</small></span></a>
+        <div class="nav-label">NGHIỆP VỤ LỄ TÂN</div>
+        <nav aria-label="Điều hướng chính">
+            <NavLink href="/" Match="NavLinkMatch.All">Booking &amp; công nợ</NavLink>
+            @foreach (var view in HotelService.Views.Where(v => v.Key != "bookings"))
+            {
+                <NavLink href="@($"views/{view.Key}")">@view.Title</NavLink>
+            }
+
+        </nav>
+        <div class="sidebar-footer">Đồ án hệ quản trị CSDL<br />ASP.NET Core · Blazor</div>
+    </aside>
+    <main id="main-content">
+        <ErrorBoundary>
+            <ChildContent>@Body</ChildContent>
+            <ErrorContent><div class="notice error">Trang gặp lỗi. Tải lại trang rồi kiểm tra log trong cửa sổ chạy ứng dụng.</div><a href="/">Về trang chính</a></ErrorContent>
+        </ErrorBoundary>
+    </main>
+</div>

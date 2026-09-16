@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet @rendermode="new InteractiveServerRenderMode(prerender: false)" />
+</head>
+<body>
+    <Routes @rendermode="new InteractiveServerRenderMode(prerender: false)" />
+    <div id="blazor-error-ui" role="alert">Kết nối hoặc thao tác gặp lỗi. <a href="/">Tải lại ứng dụng</a></div>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>
