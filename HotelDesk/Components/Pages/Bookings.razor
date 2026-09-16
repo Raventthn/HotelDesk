@@ -3,68 +3,44 @@
 @inject HotelService Hotel
 @inject ILogger<Bookings> Logger
 @inject NavigationManager Navigation
+
 <PageTitle>@Title · Hotel Desk</PageTitle>
-<header class="page-header"><div><div class="eyebrow">KHÔNG GIAN LÀM VIỆC</div><h1>@Title</h1></div><button class="button secondary" disabled="@(_loading || _saving)" @onclick="RefreshAsync">Tải lại dữ liệu</button></header>
+
+<header class="page-header">
+    <div>
+        <div class="eyebrow">KHÔNG GIAN LÀM VIỆC</div>
+        <h1>@Title</h1>
+    </div>
+    <button class="button secondary" disabled="@(_loading || _saving)" @onclick="RefreshAsync">Tải lại dữ liệu</button>
+</header>
+
 @if (!string.IsNullOrEmpty(_message)) { <div class="notice @(_ok ? "success" : "error")" role="status">@_message</div> }
 @if (Key == "revenue")
 { <p class="note">Giá trị booking mới dùng đơn giá đã lưu lúc đặt. Booking cũ chưa có chi tiết được đánh dấu ước tính. Tiền thực thu và hoàn tiền xem ở Lịch sử giao dịch.</p> }
+
 <div class="panel">
     @if (Key == "rooms")
     {
-        <EditForm Model="_roomRange"
-                  OnValidSubmit="RefreshAsync"
-                  FormName="room-search">
-
+        <EditForm Model="_roomRange" OnValidSubmit="RefreshAsync" FormName="room-search">
             <DataAnnotationsValidator />
             <ValidationSummary />
-
             <fieldset disabled="@(_loading || _saving)">
-
                 <div class="form-grid">
-                    <label>
-                        Ngày nhận
-                        <InputDate @bind-Value="_roomRange.From"
-                                   min="@DateTime.Today.ToString("yyyy-MM-dd")" />
-                    </label>
-
-                    <label>
-                        Ngày trả
-                        <InputDate @bind-Value="_roomRange.To"
-                                   min="@_roomRange.From.AddDays(1).ToString("yyyy-MM-dd")" />
-                    </label>
+                    <label>Ngày nhận<InputDate @bind-Value="_roomRange.From" min="@DateTime.Today.ToString("yyyy-MM-dd")" /></label>
+                    <label>Ngày trả<InputDate @bind-Value="_roomRange.To" min="@_roomRange.From.AddDays(1).ToString("yyyy-MM-dd")" /></label>
                 </div>
-
                 <div class="form-footer">
-
-                    <!-- TRA CỨU BÌNH THƯỜNG -->
-                    <button class="button secondary"
-                            type="submit">
-                        Tìm phòng trống
+                    <button class="button secondary" type="submit">Tìm phòng trống (Bản Fix)</button>
+                    <button class="button secondary" type="button" disabled="@(_loading || _saving)" @onclick="SearchRoomsDemoAsync">
+                        Tìm phòng trống (Demo Dirty Read - Bản Lỗi)
                     </button>
-
-                    <!-- DIRTY READ DEMO -->
-                    <button class="button secondary"
-                            type="button"
-                            disabled="@(_loading || _saving)"
-                            @onclick="SearchRoomsDemoAsync">
-
-                        Tìm phòng trống (Demo Dirty Read)
-                    </button>
-
                 </div>
-
             </fieldset>
         </EditForm>
-
-        <p class="muted">
-            Chỉ hiển thị phòng trống đủ mọi đêm từ ngày nhận đến trước ngày trả.
-            Kết quả được kiểm tra lại khi đặt phòng.
-        </p>
-
-        <p class="muted">
-            Nút Demo sử dụng READ UNCOMMITTED (thông qua SP sp_TraCuuPhongTrong_DirtyRead) để minh họa Dirty Read.
-        </p>
+        <p class="muted">Chỉ hiển thị phòng trống đủ mọi đêm từ ngày nhận đến trước ngày trả. Kết quả được kiểm tra lại khi đặt phòng.</p>
+        <p class="muted">Nút Demo sử dụng READ UNCOMMITTED (thông qua SP sp_TraCuuPhongTrong_DirtyRead) để minh họa Dirty Read.</p>
     }
+
     @if (Key == "room-management")
     {
         <details class="panel" open="@(Key == "room-management")">
@@ -92,6 +68,7 @@
             </EditForm>
         </details>
     }
+
     @if (Key == "calendar")
     {
         <EditForm Model="_calendarRange" OnValidSubmit="RefreshAsync" FormName="calendar-range">
@@ -102,9 +79,9 @@
             </div><button class="button secondary" type="submit">Xem lịch phòng</button></fieldset>
         </EditForm>
         <p class="muted">Mặc định hiển thị 7 ngày từ hôm nay, theo thứ tự ngày tăng dần. Khoảng ngày bao gồm cả ngày bắt đầu và kết thúc.</p>
-        @if (_data.Rows.Count == 500)
-        { <p class="notice warning">Đã tải tối đa 500 dòng. Chọn khoảng ngày ngắn hơn để xem đầy đủ lịch phòng.</p> }
+        @if (_data.Rows.Count == 500) { <p class="notice warning">Đã tải tối đa 500 dòng. Chọn khoảng ngày ngắn hơn để xem đầy đủ lịch phòng.</p> }
     }
+
     @if (Key != "booking" && Key != "room-management")
     {
         <div class="table-toolbar"><label>Tìm trong các dòng đã tải<input placeholder="Tìm trong các dòng đã tải" @bind="_search" @bind:event="oninput" /></label><span class="muted">@Filtered.Rows.Count / @_data.Rows.Count dòng · tối đa 500</span></div>
@@ -114,6 +91,7 @@
         else { <DataGrid Data="Filtered" /> }
     }
 </div>
+
 @if (CanOperate)
 {
     <section class="panel">
@@ -151,6 +129,7 @@
         </EditForm>
     </section>
 }
+
 @if (Key == "booking")
 {
     <section class="panel">
@@ -160,82 +139,44 @@
             @if (!string.IsNullOrEmpty(_catalogError))
             {
                 <div class="notice error">@_catalogError</div>
-
-                <button class="button secondary"
-                        @onclick="LoadCatalogAsync">
-                    Tải lại danh mục
-                </button>
+                <button class="button secondary" @onclick="LoadCatalogAsync">Tải lại danh mục</button>
             }
 
-            <EditForm Model="_newBooking"
-                      OnValidSubmit="CreateBookingAsync"
-                      FormName="new-booking"><DataAnnotationsValidator />
+            <EditForm Model="_newBooking" OnValidSubmit="CreateBookingAsync" FormName="new-booking">
+                <DataAnnotationsValidator />
                 <ValidationSummary />
 
                 <fieldset disabled="@_saving">
-
                     <div class="form-grid">
-
-                        <label>
-                            Tên khách hàng
-                            <InputText @bind-Value="_newBooking.CustomerName"
-                                       maxlength="200" />
-                        </label>
-
-                        <label>
-                            Số điện thoại
-                            <InputText @bind-Value="_newBooking.CustomerPhone"
-                                       maxlength="15" />
-                        </label>
-
-                        <label>
-                            CCCD
-                            <InputText @bind-Value="_newBooking.CustomerIdentity"
-                                       maxlength="20" />
-                        </label>
-
-                        <label>
-                            Email (không bắt buộc)
-                            <InputText @bind-Value="_newBooking.CustomerEmail"
-                                       maxlength="100" />
-                        </label>
+                        <label>Tên khách hàng<InputText @bind-Value="_newBooking.CustomerName" maxlength="200" /></label>
+                        <label>Số điện thoại<InputText @bind-Value="_newBooking.CustomerPhone" maxlength="15" /></label>
+                        <label>CCCD<InputText @bind-Value="_newBooking.CustomerIdentity" maxlength="20" /></label>
+                        <label>Email (không bắt buộc)<InputText @bind-Value="_newBooking.CustomerEmail" maxlength="100" /></label>
 
                         <label>
                             Nhân viên
-
                             <InputSelect @bind-Value="_newBooking.StaffId">
                                 <option value="">Chọn nhân viên</option>
-
                                 @foreach (var row in _staff.Rows)
                                 {
-                                    <option value="@(row.GetValueOrDefault("MaNV"))">
-                                        @row.GetValueOrDefault("MaNV")
-                                        ·
-                                        @row.GetValueOrDefault("HoTen")
-                                    </option>
+                                    <option value="@(row.GetValueOrDefault("MaNV"))">@row.GetValueOrDefault("MaNV") · @row.GetValueOrDefault("HoTen")</option>
                                 }
                             </InputSelect>
                         </label>
 
                         <label>
                             Ngày nhận
-
-                            <InputDate @bind-Value="_newBooking.ArrivalDate"
-                                       min="@DateTime.Today.ToString("yyyy-MM-dd")" />
-
+                            <InputDate @bind-Value="_newBooking.ArrivalDate" min="@DateTime.Today.ToString("yyyy-MM-dd")" />
                             <ValidationMessage For="@(() => _newBooking.ArrivalDate)" />
                         </label>
 
                         <label>
                             Ngày trả
-
-                            <InputDate @bind-Value="_newBooking.DepartureDate"
-                                       min="@_newBooking.ArrivalDate.AddDays(1).ToString("yyyy-MM-dd")" />
+                            <InputDate @bind-Value="_newBooking.DepartureDate" min="@_newBooking.ArrivalDate.AddDays(1).ToString("yyyy-MM-dd")" />
                         </label>
 
                         <label>
                             Danh sách phòng
-
                             <div class="room-selector">
                                 <div class="room-list">
                                     @foreach (var row in (Key == "rooms" ? _data : _rooms).Rows)
@@ -244,71 +185,32 @@
                                         var roomNumber = row.GetValueOrDefault("SoPhong")?.ToString();
                                         var selected = IsRoomSelected(roomId);
 
-                                        <button type="button"
-                                                class="room-option @(selected ? "selected" : "")"
-                                                aria-pressed="@selected"
-                                                @onclick="() => ToggleRoom(roomId)">
-
+                                        <button type="button" class="room-option @(selected ? "selected" : "")" aria-pressed="@selected" @onclick="() => ToggleRoom(roomId)">
                                             <span class="room-check @(selected ? "checked" : "")">
-                                                @if (selected)
-                                                {
-                                                    <span>✓</span>
-                                                }
+                                                @if (selected) { <span>✓</span> }
                                             </span>
-
                                             <span class="room-info">
                                                 <strong>@roomId</strong>
                                                 <span>Phòng @roomNumber</span>
                                             </span>
-
                                         </button>
                                     }
                                 </div>
                             </div>
                         </label>
-
                     </div>
 
                     <div class="form-footer">
-
-                        <!-- SP CHUẨN -->
-                        <button class="button"
-                                type="submit">
-                            @(_saving ? "Đang thực hiện…" : "Đặt phòng chuẩn")
-                        </button>
-
-                        <!-- DEMO LOST UPDATE: BẢN LỖI -->
-                        <button class="button secondary"
-                                type="button"
-                                disabled="@_saving"
-                                @onclick="() => CreateUnsafeBookingAsync(false)">
-                            Đặt phòng lỗi (Lost Update)
-                        </button>
-
-                        <!-- DEMO LOST UPDATE: BẢN FIX BẢO VỆ -->
-                        <button class="button secondary"
-                                type="button"
-                                disabled="@_saving"
-                                @onclick="() => CreateUnsafeBookingAsync(true)">
-                            Đặt phòng bảo vệ (Fix Lost Update)
-                        </button>
-
-                        <!-- DEADLOCK -->
-                        <button class="button secondary"
-                                type="button"
-                                disabled="@_saving"
-                                @onclick="CreateDeadlockBookingAsync">
-                            Demo Deadlock
-                        </button>
-
+                        <button class="button" type="submit">@(_saving ? "Đang thực hiện…" : "Đặt phòng chuẩn (Fix Deadlock KB1)")</button>
+                        <button class="button secondary" type="button" disabled="@_saving" @onclick="() => CreateUnsafeBookingAsync(false)">Đặt phòng lỗi (Lost Update)</button>
+                        <button class="button secondary" type="button" disabled="@_saving" @onclick="() => CreateUnsafeBookingAsync(true)">Đặt phòng bảo vệ (Fix Lost Update)</button>
+                        <button class="button secondary" type="button" disabled="@_saving" @onclick="CreateDeadlockBookingAsync">Demo Deadlock KB1 (Bản Lỗi)</button>
                     </div>
-
                 </fieldset>
-
             </EditForm>
-
         </details>
     </section>
+
     <section class="panel">
         <details>
             <summary>Demo Non-Repeatable Read &amp; Phantom Read</summary>
@@ -339,14 +241,14 @@
             { <p class="notice @(_concurrencyOk ? "success" : "error")">@_concurrencyMessage</p> }
         </details>
     </section>
-}
-<!-- KHU VỰC THÊM MỚI: DEMO DEADLOCK KB2 -->
+
+    <!-- DEMO DEADLOCK KB2 ĐÃ ĐƯỢC CHUYỂN VÀO ĐÚNG TAB BOOKING -->
     <section class="panel">
         <details>
             <summary>Demo Deadlock KB2 (Thanh toán vs Báo cáo)</summary>
             <p class="muted">
-                Xung đột giữa tiến trình Ghi (Lễ tân thanh toán cập nhật DATPHONG & THANHTOAN) 
-                và Tiến trình Đọc (Báo cáo tổng hợp khóa bảng THANHTOAN & DATPHONG).
+                Xung đột giữa tiến trình Ghi (Lễ tân thanh toán cập nhật DATPHONG &amp; THANHTOAN) 
+                và Tiến trình Đọc (Báo cáo tổng hợp khóa bảng THANHTOAN &amp; DATPHONG).
             </p>
 
             <div class="form-grid">
@@ -371,6 +273,8 @@
             }
         </details>
     </section>
+}
+
 @code {
     [Parameter] public string? ViewKey { get; set; }
     [SupplyParameterFromQuery(Name = "from")] public DateTime? BookingFrom { get; set; }
@@ -781,7 +685,6 @@
         _hasSelection=false; _canNoShow=false; _operation=new(); _balanceHint=""; _due=null; _paid=null;
     }
 
-// Biến điều khiển Deadlock KB2
     private string _kb2BookingId = "DP00000001";
     private string _kb2Message = "";
     private bool _kb2Busy = false;
@@ -811,5 +714,4 @@
             await RefreshAsync();
         }
     }
-
 }
